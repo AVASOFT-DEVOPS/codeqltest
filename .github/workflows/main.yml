@@ -1,0 +1,106 @@
+name: Docker Image CI 
+
+on: 
+  push: 
+    branches: [ "dev", "release/*" ] 
+
+jobs:
+
+  code_coverage:
+
+    runs-on: ubuntu-latest
+
+    steps: 
+    - uses: actions/checkout@v3
+    
+    - name: Set up Go
+      uses: actions/setup-go@v3
+      with:
+        go-version: 1.18
+        
+    - name: Go Version
+      run: go version
+        
+    - name: Go build
+      run: go build
+      
+    - name: List Directory
+      run: ls
+      
+    - name: Go test 
+      run: go test
+
+  Dev_Image_Build: 
+  
+    needs: code_coverage
+
+    if: github.ref == 'refs/heads/dev'
+
+    runs-on: ubuntu-latest
+
+    env: 
+     BRANCH_NAME: $(echo $GITHUB_REF | cut -d'/' -f 3) 
+     COMMIT_ID: $(echo $GITHUB_SHA | cut -c1-7)
+
+    steps: 
+    - uses: actions/checkout@v3 
+
+    - name: Read VERSION file 
+      id: getversion 
+      run: echo "::set-output name=version::$(cat app-version)" 
+
+    - name: Configure AWS credentials 
+      uses: aws-actions/configure-aws-credentials@v1 
+      with: 
+        aws-access-key-id:  ${{secrets.AWS_CP_IAM_Access_Key}} 
+        aws-secret-access-key: ${{secrets.AWS_CP_IAM_Secret_Key}} 
+        aws-region:  ${{secrets.AWS_CP_Region}}
+
+    - name: Login to Amazon ECR 
+      id: login-ecr 
+      uses: aws-actions/amazon-ecr-login@v1 
+
+    - name: Build, tag, and push image to Amazon ECR 
+      env: 
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }} 
+        ECR_REPOSITORY: ${{ github.event.repository.name }} 
+
+      run: | 
+        docker build . --file Dockerfile -t $ECR_REGISTRY/$ECR_REPOSITORY:${{ steps.getversion.outputs.version }}-${GITHUB_RUN_NUMBER}-${{env.COMMIT_ID}}-${{env.BRANCH_NAME}}
+        
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:${{ steps.getversion.outputs.version }}-${GITHUB_RUN_NUMBER}-${{env.COMMIT_ID}}-${{env.BRANCH_NAME}} 
+        
+  Release_Image_Build: 
+  
+    needs: code_coverage
+    
+    if: github.ref != 'refs/heads/dev'
+
+    runs-on: ubuntu-latest
+
+    env: 
+     BRANCH_NAME: $(echo $GITHUB_REF_NAME | cut -c 9-)
+     COMMIT_ID: $(echo $GITHUB_SHA | cut -c1-7)
+
+    steps: 
+    - uses: actions/checkout@v3 
+
+    - name: Configure AWS credentials 
+      uses: aws-actions/configure-aws-credentials@v1 
+      with: 
+        aws-access-key-id:  ${{secrets.AWS_CP_IAM_Access_Key}} 
+        aws-secret-access-key: ${{secrets.AWS_CP_IAM_Secret_Key}} 
+        aws-region:  ${{secrets.AWS_CP_Region}}
+
+    - name: Login to Amazon ECR 
+      id: login-ecr 
+      uses: aws-actions/amazon-ecr-login@v1 
+
+    - name: Build, tag, and push image to Amazon ECR 
+      env: 
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }} 
+
+      run: | 
+        docker build . --file Dockerfile -t $ECR_REGISTRY/${{secrets.ECR_REPOSITORY}}:${{env.BRANCH_NAME}}-${GITHUB_RUN_NUMBER}-${{env.COMMIT_ID}}
+        
+        docker push $ECR_REGISTRY/${{secrets.ECR_REPOSITORY}}:${{env.BRANCH_NAME}}-${GITHUB_RUN_NUMBER}-${{env.COMMIT_ID}}
